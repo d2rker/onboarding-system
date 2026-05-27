@@ -1,0 +1,381 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Zomato logs</title>
+    <style>
+        :root{
+            --bg:#081528;
+            --card:#ffffff;
+            --muted:#6b7280;
+            --accent:#0066d6;
+            --accent-weak:#1f2834;
+            --success:#16a34a;
+            --border:#e6e9ef;
+        }
+        html,body{height:100%;}
+        body { font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; margin:0; background:var(--bg); color:#111827; }
+        .container{max-width:1100px;margin:28px auto;padding:20px;background:var(--card);border-radius:10px;box-shadow:0 6px 20px rgba(16,24,40,0.06);}
+        .header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}
+        h1{font-size:20px;margin:0}
+        .buttons, .form-nav { display: flex; gap: 8px; }
+        .btn{background:transparent;border:1px solid var(--border);padding:8px 12px;border-radius:8px;cursor:pointer;color:var(--muted);font-weight:600}
+        .btn:hover{background:var(--accent-weak);border-color:var(--accent);color:var(--accent)}
+        .primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+        .primary:hover{filter:brightness(.95)}
+        .send-kit{background:var(--accent);color:#fff;border:none;padding:8px 12px;border-radius:8px;cursor:pointer;box-shadow:0 2px 6px rgba(3,102,214,0.12);font-weight:600}
+        .send-kit:hover{background:#0053b8;transform:translateY(-1px)}
+        table{width:100%;border-collapse:collapse;background:transparent}
+        thead th{background:#f8fafc;color:#374151;font-weight:700;padding:12px;border-bottom:1px solid var(--border);text-align:left}
+        tbody td{padding:10px;border-bottom:1px solid var(--border);color:#111827}
+        tbody tr:nth-child(even){background:#fbfdff}
+        tbody tr:hover{background:#f1f5f9}
+        .muted{color:var(--muted);font-size:13px}
+        .content{padding-top:6px}
+        .actions .label-success{color:var(--success);font-weight:700}
+        /* status badges */
+        .muted.label-success{background:rgba(22,163,74,0.12);color:var(--success);padding:6px 10px;border-radius:999px;font-weight:700}
+        .muted.label-failed{background:rgba(239,68,68,0.08);color:#dc2626;padding:6px 10px;border-radius:999px;font-weight:700}
+        .muted.label-pending{background:rgba(249,115,22,0.08);color:#d97706;padding:6px 10px;border-radius:999px;font-weight:700}
+        .muted.label-dispatched{background:rgba(3,102,214,0.08);color:var(--accent);padding:6px 10px;border-radius:999px;font-weight:700}
+        .actions{display:flex;gap:8px;align-items:center}
+        .small-muted{font-size:12px;color:#6b7280}
+        @media (max-width:800px){.container{margin:12px;padding:12px}thead th{font-size:13px}tbody td{font-size:13px}}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1><i>Zomato — Onboarding Portal</i></h1>
+            <div class="buttons">
+                <button class="btn" id="onboarding">Submit Onboarding Form</button>
+                <button class="btn" id="onboarding-status">QC Desk</button>
+                <button class="btn" id="dispatch">Dispatched</button>
+                <button class="btn" id="order">Orders</button>
+            </div>
+        </div>
+
+        <div class="content">
+            <div id="tableContent"></div>
+        </div>
+    </div>
+
+    <script>
+        const onboardingButton = document.getElementById('onboarding');
+        const onboardingStatusButton = document.getElementById('onboarding-status');
+        const dispatchButton = document.getElementById('dispatch');
+        const orderButton = document.getElementById('order');
+        const tableContent = document.getElementById('tableContent');
+
+        const columns = ['fe_id', 'name', 'mobile', 'status', 'created_at'];
+
+        function renderTable(data, showAction, ordersSet = new Set(), dispatchedSet = new Set()) {
+            if (!Array.isArray(data) || data.length === 0) {
+                tableContent.innerHTML = '<p>No records found.</p>';
+                return;
+            }
+
+            tableContent.innerHTML =
+                '<table>' +
+                    '<thead>' +
+                        '<tr>' +
+                            columns.map(column => '<th>' + column.replace(/_/g, ' ').toUpperCase() + '</th>').join('') +
+                            (showAction ? '<th>ACTION</th>' : '') +
+                        '</tr>' +
+                    '</thead>' +
+                    '<tbody>' +
+                        data.map(item =>
+                            '<tr>' +
+                                columns.map(column => {
+                                    // If column is status, override to show 'Dispatched' when applicable
+                                    if (column === 'status') {
+                                        // Normalize status values for clarity
+                                        let raw = (item[column] || '').toString();
+                                        let stat = raw;
+                                        if (dispatchedSet.has(item.fe_id)) {
+                                            stat = 'Dispatched';
+                                        } else if (/pending/i.test(raw)) {
+                                            stat = 'Pending';
+                                        } else if (/onboarding successful|completed|approved/i.test(raw)) {
+                                            stat = 'Completed';
+                                        } else if (/failed/i.test(raw)) {
+                                            stat = 'Failed';
+                                        }
+                                        // render as a small label
+                                        const cls = stat === 'Completed' ? 'label-success' : (stat === 'Failed' ? 'label-failed' : (stat === 'Dispatched' ? 'label-dispatched' : 'label-pending'));
+                                        return '<td><span class="muted ' + cls + '">' + stat + '</span></td>';
+                                    }
+                                    return '<td>' + (item[column] ?? '') + '</td>';
+                                }).join('') +
+                                (showAction
+                                    ? '<td> ' +
+                                        (
+                                            (item.status === 'Onboarding successful' && !ordersSet.has(item.fe_id))
+                                                ? '<button class="send-kit" data-feid="' + item.fe_id + '">Send OB kit →</button>'
+                                                : (ordersSet.has(item.fe_id) || dispatchedSet.has(item.fe_id) ? '<span style="color:green">OB kit sent</span>' : '')
+                                        ) +
+                                      '</td>'
+                                    : '') +
+                            '</tr>'
+                        ).join('') +
+                    '</tbody>' +
+                '</table>';
+        }
+
+        async function loadOnboarding() {
+            tableContent.innerHTML = '<p>Loading onboarding data...</p>';
+            try {
+                // Fetch approved list, pending list, dispatched list and orders
+                const [respOnboarding, respPending, respDispatched, respOrders] = await Promise.all([
+                    fetch('/api/onboarding'),
+                    fetch('/api/onboarding-pending'),
+                    fetch('/api/dispatched'),
+                    fetch('/api/order')
+                ]);
+                if (!respOnboarding.ok) throw new Error('Failed to fetch onboarding data');
+                if (!respPending.ok) throw new Error('Failed to fetch onboarding pending data');
+                if (!respDispatched.ok) throw new Error('Failed to fetch dispatched data');
+                if (!respOrders.ok) throw new Error('Failed to fetch order data');
+
+                const [approved, pending, dispatched, orders] = await Promise.all([respOnboarding.json(), respPending.json(), respDispatched.json(), respOrders.json()]);
+
+                // Merge approved + pending + any other lists into a single list keyed by fe_id
+                const map = new Map();
+                (pending || []).forEach(it => map.set(it.fe_id, it));
+                (approved || []).forEach(it => map.set(it.fe_id, it));
+                // include dispatched records so 'completed' / onboarded people appear in the list
+                (dispatched || []).forEach(it => map.set(it.fe_id, it));
+                const merged = Array.from(map.values());
+
+                const ordersSet = new Set((orders || []).map(o => o.fe_id));
+                const dispatchedSet = new Set((dispatched || []).map(d => d.fe_id));
+
+                renderTable(merged, true, ordersSet, dispatchedSet);
+            } catch (error) {
+                tableContent.innerHTML = '<p style="color: red;">' + error.message + '</p>';
+            }
+        }
+
+        function showOnboardingForm() {
+            tableContent.innerHTML = '<div style="max-width:720px;margin:auto;">' +
+                '<h2>Welcome to the Zomato onboarding page</h2>' +
+                '<p>Please fill all the details</p>' +
+                '<form id="onboardForm">' +
+                    '<div style="margin-bottom:8px;"><label>Name<br><input name="name" required style="width:100%"/></label></div>' +
+                    '<div style="margin-bottom:8px;"><label>Mobile<br><input name="mobile" required style="width:100%"/></label></div>' +
+                    '<div style="margin-bottom:8px;"><label>PAN Card Number<br><input name="pan" required style="width:100%"/></label></div>' +
+                    '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px;"><button type="submit" class="primary">Submit</button><button type="button" class="btn" id="goto-onboarding-list">Onboarding List</button></div>' +
+                '</form>' +
+                '<div id="onboardMsg" style="margin-top:12px"></div>' +
+            '</div>';
+
+            // single navigation button inside form to go to onboarding list (others are in header)
+            document.getElementById('goto-onboarding-list').addEventListener('click', loadOnboarding);
+
+            const form = document.getElementById('onboardForm');
+            const msg = document.getElementById('onboardMsg');
+            form.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                msg.textContent = 'Submitting...';
+                const formData = new FormData(form);
+                const body = { name: formData.get('name'), mobile: formData.get('mobile'), pan: formData.get('pan') };
+                try {
+                    const res = await fetch('/api/submit-onboarding', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+                    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Failed to submit'); }
+                    const result = await res.json();
+                    msg.innerHTML = '<span style="color:green">Submitted — FE ID: ' + result.record.fe_id + '</span>';
+                    setTimeout(() => loadQCPage(), 800);
+                } catch (err) {
+                    msg.innerHTML = '<span style="color:red">' + err.message + '</span>';
+                }
+            });
+        }
+
+        async function loadQCPage() {
+            tableContent.innerHTML = '<p>Loading QC records...</p>';
+            try {
+                // Fetch both pending and approved onboardings so QC desk can view all records
+                const [respPending, respAll] = await Promise.all([fetch('/api/onboarding-pending'), fetch('/api/onboarding-all')]);
+                if (!respPending.ok) throw new Error('Failed to fetch onboarding pending data');
+                if (!respAll.ok) throw new Error('Failed to fetch onboarding list data');
+                const pending = await respPending.json();
+                const approved = await respAll.json();
+
+                // Merge, keeping unique fe_id (approved entries indicate completed QC)
+                const map = new Map();
+                (pending || []).forEach(it => map.set(it.fe_id, it));
+                (approved || []).forEach(it => map.set(it.fe_id, it));
+                const data = Array.from(map.values());
+
+                if (!Array.isArray(data) || data.length === 0) { tableContent.innerHTML = '<p>No QC records found.</p>'; return; }
+
+                const qcColumns = ['fe_id','name','mobile','pan','status','created_at'];
+                tableContent.innerHTML =
+                    '<table>' +
+                        '<thead><tr>' + qcColumns.map(c=>'<th>'+c.replace(/_/g,' ').toUpperCase()+' </th>').join('') + '<th>ACTION</th></tr></thead>' +
+                        '<tbody>' + data.map(item =>
+                            '<tr>' + qcColumns.map(col=>'<td>'+(item[col]??'')+'</td>').join('') +
+                            '<td>' + (item.status==='Onboarding successful' ? '<span style="color:green">QC PASS</span>' : (item.status === 'Failed' ? '<span style="color:red">QC FAILED</span>' : '<button class="qc-approve" data-feid="'+item.fe_id+'">QC Pass</button> <button class="qc-reject" data-feid="'+item.fe_id+'">QC Fail</button>')) + '</td>' +
+                            '</tr>'
+                        ).join('') + '</tbody>' +
+                    '</table>';
+            } catch (err) {
+                tableContent.innerHTML = '<p style="color:red">' + err.message + '</p>';
+            }
+        }
+
+        async function loadDispatched() {
+            tableContent.innerHTML = '<p>Loading dispatched data...</p>';
+            try {
+                const [respD, respO] = await Promise.all([fetch('/api/dispatched'), fetch('/api/order')]);
+                if (!respD.ok) throw new Error('Failed to fetch dispatched data');
+                if (!respO.ok) throw new Error('Failed to fetch order data');
+                const data = await respD.json();
+                const orders = await respO.json();
+                const orderFeSet = new Set((orders || []).map(o => o.fe_id));
+                if (!Array.isArray(data) || data.length === 0) {
+                    tableContent.innerHTML = '<p>No dispatched records found.</p>';
+                    return;
+                }
+
+                tableContent.innerHTML =
+                    '<table>' +
+                        '<thead>' +
+                            '<tr>' +
+                                columns.map(c => '<th>' + c.replace(/_/g,' ').toUpperCase() + '</th>').join('') +
+                                '<th>ACTION</th>' +
+                            '</tr>' +
+                        '</thead>' +
+                        '<tbody>' +
+                            data.map(item =>
+                                '<tr>' +
+                                    columns.map(column => '<td>' + (item[column] ?? '') + '</td>').join('') +
+                                    '<td>' + (
+                                        orderFeSet.has(item.fe_id)
+                                            ? '<span style="color:green;font-weight:600;">Order Created ✓</span>'
+                                            : '<button class="create-order" data-feid="' + item.fe_id + '">Create Order →</button>'
+                                    ) + '</td>' +
+                                '</tr>'
+                            ).join('') +
+                        '</tbody>' +
+                    '</table>';
+            } catch (error) {
+                tableContent.innerHTML = '<p style="color: red;">' + error.message + '</p>';
+            }
+        }
+
+        async function loadOrder() {
+            tableContent.innerHTML = '<p>Loading order tracking data...</p>';
+            try {
+                const response = await fetch('/api/order');
+                if (!response.ok) throw new Error('Failed to fetch order data');
+                const data = await response.json();
+
+                const orderColumns = ['order_id', 'tracking_id', 'fe_id', 'tracking_status', 'last_updated'];
+
+                if (!Array.isArray(data) || data.length === 0) {
+                    tableContent.innerHTML = '<p>No order tracking records found.</p>';
+                    return;
+                }
+
+                tableContent.innerHTML =
+                    '<table>' +
+                        '<thead>' +
+                            '<tr>' +
+                                orderColumns.map(column => '<th>' + column.replace(/_/g, ' ').toUpperCase() + '</th>').join('') +
+                            '</tr>' +
+                        '</thead>' +
+                        '<tbody>' +
+                            data.map(item =>
+                                '<tr>' +
+                                    orderColumns.map(column => '<td>' + (item[column] ?? '') + '</td>').join('') +
+                                  '</tr>'
+                            ).join('') +
+                        '</tbody>' +
+                    '</table>';
+            } catch (error) {
+                tableContent.innerHTML = '<p style="color: red;">' + error.message + '</p>';
+            }
+        }
+
+        async function sendKit(feId) {
+            tableContent.innerHTML = '<p>Sending OB kit...</p>';
+            try {
+                const response = await fetch('/api/dispatch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ fe_id: feId })
+                });
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || 'Failed to send OB kit');
+                }
+                await loadOrder();
+            } catch (error) {
+                tableContent.innerHTML = '<p style="color: red;">' + error.message + '</p>';
+            }
+        }
+
+        tableContent.addEventListener('click', event => {
+            const button = event.target.closest('.send-kit');
+            if (button)     
+            {
+                sendKit(button.dataset.feid);
+            }
+            const createBtn = event.target.closest('.create-order');
+            if (createBtn) {
+                (async () => {
+                    tableContent.innerHTML = '<p>Creating order...</p>';
+                    try {
+                        const res = await fetch('/api/create-order', {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fe_id: createBtn.dataset.feid })
+                        });
+                        if (!res.ok) {
+                            const err = await res.json(); throw new Error(err.error || 'Failed to create order');
+                        }
+                        await loadDispatched();
+                        await loadOrder();
+                    } catch (err) {
+                        tableContent.innerHTML = '<p style="color: red;">' + err.message + '</p>';
+                    }
+                })();
+            }
+            const qcApprove = event.target.closest('.qc-approve');
+            if (qcApprove) {
+                (async () => {
+                    tableContent.innerHTML = '<p>Processing QC...</p>';
+                    try {
+                        const res = await fetch('/api/qc', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fe_id: qcApprove.dataset.feid, action: 'pass' }) });
+                        if (!res.ok) { const e = await res.json(); throw new Error(e.error || 'QC failed'); }
+                        // After QC pass, navigate to approved onboarding list so user can send OB kit
+                        await loadOnboarding();
+                    } catch (err) {
+                        tableContent.innerHTML = '<p style="color:red">' + err.message + '</p>';
+                    }
+                })();
+            }
+            const qcReject = event.target.closest('.qc-reject');
+            if (qcReject) {
+                (async () => {
+                    tableContent.innerHTML = '<p>Processing QC...</p>';
+                    try {
+                        const res = await fetch('/api/qc', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fe_id: qcReject.dataset.feid, action: 'fail' }) });
+                        if (!res.ok) { const e = await res.json(); throw new Error(e.error || 'QC failed'); }
+                        await loadQCPage();
+                    } catch (err) {
+                        tableContent.innerHTML = '<p style="color:red">' + err.message + '</p>';
+                    }
+                })();
+            }
+        });
+
+        onboardingButton.addEventListener('click', showOnboardingForm);
+        onboardingStatusButton.addEventListener('click', loadQCPage);
+        dispatchButton.addEventListener('click', loadDispatched);
+        orderButton.addEventListener('click', loadOrder);
+        
+        // Initial View Setup on Mount
+        showOnboardingForm();
+    </script>
+</body>
+</html>
